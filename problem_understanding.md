@@ -36,6 +36,7 @@ For each of 518 requests the agent must:
 | Evidence | 94 files: 24 SQL snapshots, 26 logs, 29 JSON/TXT, 4 PDFs (all with a text layer), 11 PNG screenshots. Every format reduces to one fact type: *(time, system, resource, category, state, identifiers)*. |
 | Repeat requesters | 3 people filed two requests each (user_07, user_17, user_18); each request covers its own lifecycle. |
 | Recreation paths | 32 sync/restore events state "…repopulated downstream resource X". |
+| Workflow status | A workflow's `reported_status` mirrors its primary-profile operation's result (COMPLETE↔SUCCESS, PARTIALLY_COMPLETE↔PARTIAL, NOT_STARTED↔FAILED). 0 exceptions in 234 label-free attributions and 28 labeled ones. Other workflow events show no such relationship. |
 
 ## 4. Traps found (each confirmed on a sample or in the files) [V]
 
@@ -71,6 +72,8 @@ evaluation/main.py · check_output.py   sample metrics, custom cases, 17 contrac
 | Global linker instead of per-case time windows [V] | Time windows linked 30 strangers' records to one case. The solver fixes grounded edges, excludes records grounded to others, uses per-template time windows, one resource per type, one primary profile per case, and **leaves ties unlinked**. |
 | Evidence strength: direct observation > absence from a complete listing > catalog link [V] | Catches ghost copies; avoids claiming COMPLETE without proof. |
 | Category: evidence `record_type` > the workflow's attempted action > resource prefix [V] | Fixes analytics records the workflow deletes rather than anonymizes, and the support split. |
+| Status consistency as a *linking* constraint for primary-profile events only [V] | Resolves ties that timing cannot (recall 86.0% → 90.2%, precision 100%). Never used as proof of a record's state. |
+| Snapshot propagation rounds in the solver [V] | Found by a row-shuffle regression test: the result had depended on input order. |
 | Earlier-lifecycle scoping for repeat requesters [V] | Removed extra steps on case_07 / case_17 without per-case code. |
 | Sync/restore repopulation → recreation path and shared ownership [A] | Required by the problem statement; no sample contains such an event, so the gain is unmeasured. |
 | Strict time cutoff, even for identity links [A] | AGENTS.md: later evidence "must not change the answer". Costs some recall (audit records visible only later). |
@@ -78,14 +81,18 @@ evaluation/main.py · check_output.py   sample metrics, custom cases, 17 contrac
 
 ## 7. Evaluation (32 samples, offline run) [V]
 
-Status **32/32**. Step precision **100%**, recall **86.0%**, F1 **92.5%**. Exact sequence **15/32**.
-Custom cases C1–C4 pass, and all 17 contract checks pass on the 518-row `output.csv`.
+Status **32/32**. Step precision **100%**, recall **90.2%**, F1 **94.8%**. Exact sequence **18/32**.
+Custom cases C1–C4 and 15 regression tests pass, and all 17 contract checks pass on the 518-row `output.csv`.
+Of the 19 remaining missing steps, 11 are ties no grounded constraint separates, 5 have evidence only
+after `audit_at`, and 3 have no participant-visible evidence.
 Details and the failure → fix history are in `code/evaluation/evaluation_report.md`.
 
 ## 8. Remaining risks
 
-- **Recall on workflow-only records** (primary accounts, anonymized analytics) when cases share a timestamp.
-  The solver refuses to guess, so these verification steps are missing. [V]
+- **Recall on workflow-only records** when cases share a timestamp *and* a primary-operation result, and
+  for anonymized analytics. The solver refuses to guess, so these verification steps are missing. [V]
+- The status-consistency constraint holds without exception on this dataset. If the hidden labels came from
+  a generator that does not follow it, some primary-account steps could be misattributed. [A]
 - **Screenshots** are only read with an API key. Hidden cases whose only evidence is a PNG fall back to
   catalog links or nothing. [V]
 - **Hidden-set distribution** may differ from the 32 samples (e.g. more NOT_APPLICABLE or restore-path cases). [A]

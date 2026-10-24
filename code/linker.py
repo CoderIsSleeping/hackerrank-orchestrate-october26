@@ -43,6 +43,11 @@ TEMPLATES = [
     ("followup", "check confirmed", 25, 125),
     ("single", "Target resource", -20, 20),
 ]
+# A workflow's reported status summarizes its own primary-profile operation. Checked without labels on
+# all 234 primary events the solver attributes by identifiers or forced uniqueness (and on the 28 labeled
+# ones): COMPLETE<->SUCCESS, PARTIALLY_COMPLETE<->PARTIAL, NOT_STARTED<->FAILED, no exceptions. Used only
+# to rule out impossible pairings of an ungrounded primary event with a case, never as evidence of state.
+PRIMARY_RESULT_STATUS = {"SUCCESS": "COMPLETE", "PARTIAL": "PARTIALLY_COMPLETE", "FAILED": "NOT_STARTED"}
 # Fallback for templates not seen in the samples: the union of the windows above.
 DEFAULT_WINDOW = (-90, 125)
 
@@ -149,6 +154,10 @@ class GlobalLinker:
                     uid = self.subjects[case_id].user_id
                     if owners and uid not in owners:
                         continue                      # rule 3: grounded to somebody else
+                    expected = PRIMARY_RESULT_STATUS.get(a["reported_result"])
+                    if (expected and template_of(a["details"])[0] == "primary" and req["reported_status"] != expected
+                            and a["resource_id"] not in self.grounded.get(case_id, {})):
+                        continue                      # rule 6: status must match its primary operation
                     cands.add(case_id)
             if cands:
                 candidates[a["activity_id"]] = cands
@@ -173,35 +182,50 @@ class GlobalLinker:
             if len(cands) == 1 and rid in self.grounded[next(iter(cands))]:
                 assign(next(iter(cands)), aid)
 
+        def owned(aid: str) -> bool:
+            return any(by_id[aid]["resource_id"] in self.assigned[c] for c in candidates[aid])
+
+        # Propagate in snapshot rounds: every proposal is computed from the state at the start of the
+        # round and only uncontested proposals are applied, so the result never depends on row order.
+        # Two events claiming the same (case, slot) in one round are a hidden tie: neither is assigned.
         changed = True
         while changed:
             changed = False
-            # Event side: an event with a single remaining candidate case belongs to it.
-            for aid, cands in candidates.items():
+            for aid in sorted(candidates):
                 rid, slot = by_id[aid]["resource_id"], slot_of(by_id[aid])
-                live = {c for c in cands if (c, slot) not in filled or rid in self.assigned[c]}
-                if live != cands:
+                live = {c for c in candidates[aid] if (c, slot) not in filled or rid in self.assigned[c]}
+                if live != candidates[aid]:
                     candidates[aid] = live
                     changed = True
-                if len(live) == 1:
-                    c = next(iter(live))
-                    if rid not in self.assigned[c]:
-                        assign(c, aid)
-                        changed = True
+            proposals: dict[tuple, set] = defaultdict(set)      # (case, slot) -> events proposing it
+            # Event side: an event with a single remaining candidate case belongs to it.
+            for aid in sorted(candidates):
+                if len(candidates[aid]) == 1 and not owned(aid):
+                    proposals[(next(iter(candidates[aid])), slot_of(by_id[aid]))].add(aid)
             # Case side: every workflow submits exactly one primary profile, so a case with a
-            # single remaining primary-profile candidate owns it.
-            open_primary: dict[str, list] = defaultdict(list)
-            for aid, cands in candidates.items():
-                if slot_of(by_id[aid]) == "primary":
-                    for c in cands:
+            # single remaining unowned primary-profile candidate owns it.
+            open_primary: dict[str, set] = defaultdict(set)
+            for aid in sorted(candidates):
+                if slot_of(by_id[aid]) == "primary" and not owned(aid):
+                    for c in candidates[aid]:
                         if (c, "primary") not in filled:
-                            open_primary[c].append(aid)
+                            open_primary[c].add(aid)
             for c, aids in open_primary.items():
-                unowned = [aid for aid in aids if not any(by_id[aid]["resource_id"] in self.assigned[o] for o in candidates[aid])]
-                if len(unowned) == 1:
-                    assign(c, unowned[0])
-                    candidates[unowned[0]] = {c}
+                if len(aids) == 1:
+                    proposals[(c, "primary")] |= aids
+            claimed_by: dict[str, set] = defaultdict(set)         # event -> cases it was proposed to
+            for (c, _), aids in proposals.items():
+                for aid in aids:
+                    claimed_by[aid].add(c)
+            for (c, slot), aids in sorted(proposals.items()):
+                if len(aids) == 1 and len(claimed_by[next(iter(aids))]) == 1:
+                    aid = next(iter(aids))
+                    assign(c, aid)
+                    candidates[aid] = {c}
                     changed = True
+        # Kept for diagnostics (evaluation/trace_missing.py); not used for decisions.
+        self.final_candidates = candidates
+        self.events_by_id = by_id
 
     def earlier_audit(self, case_id: str) -> str:
         """Latest audit_at of an earlier request by the same person, or "" if this is their first."""

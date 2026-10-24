@@ -72,3 +72,6 @@ custom cases, the failures found and the fixes made, and the known remaining err
 - Package for submission: `python code/package.py` builds `code.zip` (README.md + code/, without caches,
   dataset, nested archives or `.env`) and fails if a required report is missing or a secret-like string is found.
 - Check the predictions: `python code/evaluation/check_output.py` runs 17 contract and policy checks on `output.csv`.
+- Regression tests: `LLM_PROVIDER=none python code/evaluation/test_regression.py -v` (15 tests: linking, state,
+  policy, invariance). Missing-step diagnosis: `LLM_PROVIDER=none python code/evaluation/trace_missing.py`.
+- `baseline/` holds dated snapshots of earlier outputs and reports, for comparison.

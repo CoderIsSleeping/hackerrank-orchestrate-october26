@@ -1,6 +1,6 @@
 # Usage report - final full-dataset run
 
-Run: `python code/main.py` on `dataset/deletion_requests.csv` (518 requests) -> `output.csv`, 16.2 s wall time. LLM provider: none (offline).
+Run: `python code/main.py` on `dataset/deletion_requests.csv` (518 requests) -> `output.csv`, 12.9 s wall time. LLM provider: none (offline).
 
 Token counts come from `response.usage` of every Claude response the run used (`code/llm.py`).
 Responses are cached on disk by request hash, so a re-run replays them: *calls* counts every

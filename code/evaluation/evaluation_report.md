@@ -26,21 +26,21 @@ Run on the 32 public samples (`dataset/sample_deletion_requests.csv`), scored ag
 | Metric | Value |
 |---|---|
 | Case-level status accuracy | 32/32 = 100.0% |
-| Sequence accuracy (entire ordered steps list identical) | 15/32 = 46.9% |
-| Step-level precision | 100.0% (166 predicted steps) |
-| Step-level recall | 86.0% (193 gold steps) |
-| Step-level F1 | 92.5% |
+| Sequence accuracy (entire ordered steps list identical) | 18/32 = 56.2% |
+| Step-level precision | 100.0% (174 predicted steps) |
+| Step-level recall | 90.2% (193 gold steps) |
+| Step-level F1 | 94.8% |
 
 Field-level accuracy (gold steps aligned to predicted steps by phase + resource_id):
 
 | Field | Accuracy |
 |---|---|
-| `phase` | 86.0% |
-| `system_id` | 86.0% |
-| `resource_id` | 86.0% |
-| `operation` | 86.0% |
-| `state` | 86.0% |
-| `evidence_id` | 86.0% |
+| `phase` | 90.2% |
+| `system_id` | 90.2% |
+| `resource_id` | 90.2% |
+| `operation` | 90.2% |
+| `state` | 90.2% |
+| `evidence_id` | 90.2% |
 
 Custom evaluation cases:
 
@@ -73,25 +73,22 @@ Contract and policy checks on the submitted `output.csv` (all 518 rows, `check_o
 | every remediation has the matching final-state verification | PASS |
 | retained categories never deleted/redacted/anonymized | PASS |
 
-Remaining sample mismatches (17):
+Remaining sample mismatches (14):
 
 - case_03: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ANONYMIZED:analytics_9406']; extra []
 - case_04: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_004']; extra []
-- case_09: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_3960', 'VERIFY_RECORD_PRESENT:audit_record_4902']; extra []
-- case_18: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_5521', 'VERIFY_RECORD_PRESENT:audit_record_6645']; extra []
-- case_20: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_5037', 'VERIFY_RECORD_PRESENT:audit_record_5569']; extra []
-- case_21: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_6440', 'VERIFY_RECORD_ANONYMIZED:analytics_5335']; extra []
-- case_22: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_4990']; extra []
+- case_09: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_PRESENT:audit_record_4902']; extra []
+- case_18: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_PRESENT:audit_record_6645']; extra []
+- case_20: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_PRESENT:audit_record_5569']; extra []
+- case_21: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ANONYMIZED:analytics_5335']; extra []
 - case_23: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_410', 'VERIFY_RECORD_PRESENT:audit_record_4128']; extra []
 - case_24: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_PRESENT:audit_record_7095']; extra []
 - case_25: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_3136', 'VERIFY_RECORD_ANONYMIZED:analytics_1895']; extra []
 - case_26: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_5684', 'VERIFY_RECORD_ANONYMIZED:analytics_4566']; extra []
-- case_27: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_3866', 'VERIFY_RECORD_ANONYMIZED:analytics_4574']; extra []
+- case_27: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ANONYMIZED:analytics_4574']; extra []
 - case_28: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_5482', 'VERIFY_RECORD_ANONYMIZED:analytics_6077']; extra []
 - case_29: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_7012', 'VERIFY_RECORD_PRESENT:audit_record_3954']; extra []
 - case_30: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_PRESENT:audit_record_1707']; extra []
-- case_31: status COMPLETE (gold COMPLETE); missing ['VERIFY_RECORD_ABSENT:account_4857']; extra []
-- case_32: status INCOMPLETE (gold INCOMPLETE); missing ['VERIFY_RECORD_ABSENT:account_8858']; extra []
 <!-- AUTO:END -->
 
 ## Custom evaluation cases (participant-made)
@@ -125,23 +122,40 @@ scores right after the fix.
 | 10 | case_07 and case_17 picked up records from a person's earlier deletion (Feb/March), which gold excludes. | Three people filed two requests each (user_07, user_17, user_18); each request covers its own lifecycle. | A record evidenced only up to the audit of an earlier request by the same person belongs to that earlier request, unless it is evidenced again later (e.g. a ghost copy reappearing). Sequence 12 → 14 / 32, precision 95.4% → 98.2%. |
 | 11 | case_12 owned a stranger's search entry and, through it, a stranger's connector. | The workflow solver attributed `search_4801` by timing only; a sync event shows it was repopulated by `data_flow_1121`, which the catalog links to user_14. | Sync/restore repopulation events (a) bring their source flow/backup into scope as a recreation path and (b) propagate ownership between source and copy, so the solver excludes the wrong case. Precision **100%**, sequence 15 / 32. |
 | 12 | Non-deletion requests competed for deletion-workflow events. | A request that does not authorize deletion never runs a deletion workflow (the activity log records them as classified non-deletion). | Intent is decided for every known request before linking; non-deletion requests are removed from the solver's candidates. No sample change; shrinks candidate sets for the hidden cases. |
+| 13 | 18 of 27 missing sample steps were workflow ties (two or more cases still candidates for one event). | Timing and slot constraints cannot separate cases that share a `reported_at`. | **Status-consistency constraint for primary-profile events**: a workflow's `reported_status` matches its own primary operation's result (COMPLETE↔SUCCESS, PARTIALLY_COMPLETE↔PARTIAL, NOT_STARTED↔FAILED). Validated *without labels* on all 234 primary events the solver attributes by identifiers or forced uniqueness (0 exceptions), and on the 28 labeled ones (0 exceptions). Used only to rule out pairings, never as evidence of state. Recall 86.0% → **90.2%**, sequence 15 → **18 / 32**, precision stays **100%**. |
+| 14 | Shuffling input rows changed case_103's primary account (regression test). | Within a propagation pass, the first of two events claiming the same (case, slot) won, so a hidden tie was broken by file order. | Snapshot propagation rounds: proposals are computed from the round's starting state and only uncontested ones are applied. Row-order invariance now holds (3 shuffle seeds, all 550 requests). The one previously order-dependent guess (case_103 `account_4070`) is now left unresolved. |
 
 ## Known remaining errors (honest list)
 
-- **Unresolvable workflow ties (largest gap, all recall).** Some records are linked by nothing except a
-  deletion-workflow event, and cases sharing the same `reported_at` produce identical-looking events
-  (e.g. case_18 / case_20 each have one primary-profile event inside the other's window). The solver leaves
-  ties unlinked rather than guess. This explains the missing `VERIFY_RECORD_ABSENT` on primary accounts and
-  `VERIFY_RECORD_ANONYMIZED` on anonymized analytics.
-- **Audit records with no visible evidence before `audit_at`.** `audit_record_7095` / `_4128` appear only in
-  a snapshot captured after their case's `audit_at`; `audit_record_6645` / `_5569` appear nowhere a
-  participant can see. The time cutoff is applied strictly, so these are not reported.
-- **Screenshots need Claude.** The 11 PNGs are read only when an API key is available. PDFs are read offline.
-- **Catalog vs screenshot conflict.** The catalog links `marketing_001` to user_09, but the marketing console
-  screenshot shows a different person. The agent follows the catalog link. I did not add a rule for
-  conflicting identities without a labelled example.
+Every remaining missing step on the samples was traced to its evidence with
+`code/evaluation/trace_missing.py` (19 missing steps after change 13; a record that has both an
+after-cutoff grounding and a tied workflow event is counted once, as a tie):
+
+| Reason | Steps | Resolvable with visible evidence? |
+|---|---|---|
+| Tie: several cases with the same window and the same primary-operation result (e.g. case_25 / case_26 both NOT_STARTED, both candidate events FAILED), or anonymized-analytics "policy action" events, which carry no status signal | 11 | No: no grounded constraint separates them, so they are left unlinked by design |
+| Only evidence is captured after `audit_at` (mostly `evidence_02`, captured 2026-09-17) | 5 | No, without breaking the audit_at rule |
+| Resource appears in no participant file or activity (`account_004`, `audit_record_6645`, `audit_record_5569`) | 3 | No |
+
+- **Screenshots need an LLM.** The 11 PNGs are read only with an API key. PDFs are read offline.
+- **Catalog vs screenshot conflict.** The catalog links `marketing_001` to user_09, but the console
+  screenshot shows a different person. The agent follows the catalog link.
 - **Recreation-path rule is not validated by the samples.** No sample case contains a sync/restore
-  repopulation event, so rule 11(a) is justified by the problem statement, not by a measured gain.
+  repopulation event, so rule 11(a) is justified by the problem statement (and a regression test),
+  not by a measured gain.
+
+## Regression tests
+
+`LLM_PROVIDER=none python code/evaluation/test_regression.py -v`: 15 tests, all passing. They cover
+shared-timestamp ties staying unresolved, status consistency breaking a tie, records grounded to another
+person, historical vs current identifiers, sync resurrection paths, insufficient evidence linking nothing,
+direct observation vs listing absence (both directions), evidence after `audit_at`, retained audit records,
+analytics anonymization (identifiable and already anonymized), unobserved records as future checks only,
+invariance under row reordering (3 seeds), and invariance when unrelated activity is removed.
+
+Baseline before changes 13–14 is preserved in `baseline/2026-10-25_9e51db8/`. Full-dataset diff against it:
+139 of 518 rows changed, **no status changed**, +138 `VERIFY_RECORD_ABSENT` steps on primary accounts, and
+1 removed (case_103's order-dependent guess). 17/17 contract checks pass.
 
 ## Optional LLM provider: Gemini free-tier test (measured)
 

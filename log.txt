@@ -179,3 +179,98 @@ repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
 worktree=main
 parent_agent=none
 
+## [2026-10-25T01:36:54+05:30] Recall investigation: status-consistency constraint, order-invariant solver, regression tests
+
+User Prompt (verbatim, secrets redacted):
+We have completed the optional Gemini provider integration and its bounded tests. Do not purchase or introduce a paid model, and do not run another broad LLM pass yet.
+Our current baseline is:
+
+* 32/32 status accuracy on 32 public labeled samples
+* 100% step precision
+* 86.0% step recall
+* 92.5% step F1
+* 15/32 exact-sequence accuracy
+* All 17 output contract checks pass
+* Offline output is reproducible and byte-identical to the committed output
+
+Gemini produced the same evaluation metrics as offline. The evaluation report identifies unresolved workflow-linking ambiguities as the largest remaining source of missing steps.
+Objective
+Improve recall without sacrificing precision, inventing evidence, violating the audit_at cutoff, or hardcoding case-specific answers.
+Step 1: Preserve the baseline
+Before modifying anything:
+
+* Save a copy of the current working output.csv and evaluation report.
+* Record the current Git commit.
+* Ensure .env and API keys remain excluded from Git, ZIPs, and logs.
+* Do not alter the public labels, expected answers, or supplied dataset.
+
+Step 2: Investigate the missing steps
+Inspect the actual implementation in linker.py, identity.py, investigator.py, planner.py, state.py, evidence_extract.py, and the evaluation code.
+Use the detailed mismatch report to trace the missing verification steps, particularly:
+
+* Primary account records.
+* Analytics records requiring anonymization.
+* Retained audit records requiring PRESENT verification.
+* Records with workflow events but ambiguous ownership.
+* Records whose only apparent evidence is outside the audit_at cutoff.
+
+For each mismatch, identify the exact evidence available, the current attribution decision, and the reason the step is omitted. Separate genuine algorithmic errors from cases that cannot be resolved using available evidence.
+Step 3: Improve the general linking algorithm
+Look for additional dataset-grounded constraints that can resolve ambiguous workflow events without relying solely on timestamp proximity.
+Consider explicit identifiers, historical identity links, catalog relationships, resource ownership, source/destination relationships in sync events, event ordering, lifecycle boundaries, and competing workflow assignments.
+Only use a constraint if it is supported by actual source evidence and is valid across cases. Do not force every resource to match a person. Preserve the existing behavior of leaving genuinely ambiguous ties unresolved.
+Do not add rules for specific case IDs, resource IDs, expected labels, or the 32 public answers.
+Step 4: Build targeted regression tests
+Add generalizable tests for:
+
+* Multiple workflows sharing timestamps.
+* Historical versus current identifiers.
+* Records that belong to another person.
+* Synchronization and restore resurrection paths.
+* Direct observations versus complete listings.
+* Records observed only after audit_at.
+* Retained records that must remain present.
+* Analytics that require anonymization.
+* Cases with insufficient evidence to establish ownership.
+
+Where possible, test invariance under input row reordering and verify that removing unrelated records does not change an answer.
+Step 5: Evaluate every meaningful change
+Run the existing evaluation and contract checks after each change.
+Report:
+
+* Status accuracy.
+* Step precision, recall, and F1.
+* Exact-sequence accuracy.
+* Field-level errors.
+* All 17 output contract checks.
+* Results on the new regression tests.
+
+Compare each run against the preserved baseline. Reject changes that increase recall by introducing unsupported steps or reducing precision.
+Step 6: Deliver a reviewable result
+If a generalizable improvement is found:
+
+* Regenerate output.csv.
+* Update evaluation_report.md with measured results and root-cause analysis.
+* Update problem_understanding.md only where the findings justify it.
+* Preserve the original baseline and document the changes.
+* Report the modified files, commands executed, and test outcomes.
+
+If the evidence does not support a safe improvement, leave the working solution unchanged and explain the remaining limitations.
+Do not claim an improvement without an actual evaluation run. Do not perform a full API-backed dataset run or send request data to an external provider without explicit authorization.
+
+Agent Response Summary:
+Preserved the baseline in baseline/2026-10-25_9e51db8/ (output.csv, evaluation report, sample predictions, commit). All runs used LLM_PROVIDER=none, so no data was sent to any provider. A new trace script classified the 27 missing sample steps: 18 workflow ties, 6 evidence only after audit_at, 3 no participant-visible evidence. Found that a workflow's reported_status mirrors its primary-profile operation result with 0 exceptions on 234 label-free attributions and 28 labeled ones, and added it as a linking-only constraint for primary events (recall 86.0% to 90.2%, precision 100%, sequence 15 to 18/32, status 32/32). A new row-shuffle regression test exposed order-dependent tie breaking in the solver; fixed with snapshot propagation rounds (one previously arbitrary guess, case_103, is now left unresolved). Added 15 regression tests (all pass, including 3-seed order invariance and unrelated-activity removal). Full-output diff vs baseline: 139 rows changed, no status changed, +138 primary-account verifications, -1 order-dependent guess; 17/17 contract checks pass. Corrected the documented missing-step breakdown to the measured 11 ties / 5 after-cutoff / 3 no evidence.
+
+Actions:
+* Created baseline/2026-10-25_9e51db8/, code/evaluation/trace_missing.py, code/evaluation/test_regression.py
+* Edited code/linker.py (status-consistency rule, snapshot propagation, diagnostics), code/evaluation/evaluation_report.md, problem_understanding.md, README.md; regenerated output.csv and code/evaluation/sample_predictions.csv
+* Ran (LLM_PROVIDER=none): trace_missing.py, evaluation/main.py after each change, test_regression.py, main.py, check_output.py, package.py, pyflakes, key-leak scan
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=main
+repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
