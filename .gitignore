@@ -1,0 +1,15 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Caches and build output
+code/.cache/
+*.zip
+agent-trace/
