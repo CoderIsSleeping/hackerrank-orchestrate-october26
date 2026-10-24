@@ -64,5 +64,6 @@ custom cases, the failures found and the fixes made, and the known remaining err
 
 - `problem_understanding.md`: problem analysis, traps found in the data, design.
 - `log.txt`: the AI-assisted development transcript (AGENTS.md format).
-- Package for submission: `Compress-Archive -Path README.md, code -DestinationPath code.zip -Force`
-  (remove `code/.cache` and `__pycache__` first; no dataset, no `.env`).
+- Package for submission: `python code/package.py` builds `code.zip` (README.md + code/, without caches,
+  dataset, nested archives or `.env`) and fails if a required report is missing or a secret-like string is found.
+- Check the predictions: `python code/evaluation/check_output.py` runs 17 contract and policy checks on `output.csv`.

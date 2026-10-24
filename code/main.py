@@ -58,9 +58,12 @@ def run(requests_path: Path, out_path: Path, verbose: bool = True) -> dict:
     all_requests.update({r["case_id"]: r for r in read_requests(DATASET / "sample_deletion_requests.csv")})
     all_requests.update({r["case_id"]: r for r in requests})
 
-    intents, intent_notes = intent.classify([r["request_text"] for r in requests])
+    # Intent is decided for every known request: the linker needs to know which ones never ran a
+    # deletion workflow. Texts are de-duplicated, so this costs little beyond the current batch.
+    intents, intent_notes = intent.classify([r["request_text"] for r in all_requests.values()])
+    no_workflow = {c for c, r in all_requests.items() if not intents[r["request_text"]]["authorizes_deletion"]}
     investigator = Investigator(units, scopes)
-    investigator.attach_linker(list(all_requests.values()))
+    investigator.attach_linker(list(all_requests.values()), no_workflow)
     evidence_times = {m["file_id"]: m["captured_at"] for m in manifest}
 
     rows, errors, trace = [], [], {}

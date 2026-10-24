@@ -112,3 +112,38 @@ repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
 worktree=main
 parent_agent=none
 
+## [2026-10-24T19:59:04+05:30] Root-cause fixes, contract checker, offline hardening, packaging
+
+User Prompt (verbatim, secrets redacted):
+Continue improving the existing implementation. Do not rebuild the project from scratch or overwrite working components unnecessarily.
+Prioritize correctness, hidden-test generalization, and submission readiness.
+
+1. Investigate the one incorrect status among the 32 labeled evaluation samples. Identify the request, expected result, predicted result, root cause, and exact evidence responsible for the error. Do not hardcode a correction for that request.
+2. Analyze the 89.78% step F1 score. Identify missing, extra, incorrectly ordered, or unsupported remediation steps. Improve the general planning logic using the supplied deletion rules and evidence.
+3. Verify that COMPLETE requires all applicable deletion treatments to be satisfied, resurrection paths to be neutralized, retention rules to be respected, and sufficient evidence to support completion.
+4. Verify NOT_APPLICABLE handling, historical identifiers, duplicate identities, backup and archive evidence, synchronization/import/restore paths, redaction, anonymization, and mandatory record retention.
+5. Review problem_understanding.md. Create or update it to document the verified problem requirements, actual dataset findings, architecture, discovered gaps, design decisions, evaluation results, and remaining risks. Clearly separate verified facts from assumptions.
+6. Run the evaluation workflow and regression tests after each meaningful change. Report status accuracy, step precision/recall/F1 if available, and per-case errors. Do not evaluate against hidden or unavailable labels.
+7. Validate all 518 output rows against the exact required schema. Check missing values, duplicate or missing request IDs, allowed status values, and valid remediation-step formatting.
+8. Keep the core solution fully functional offline. Make Anthropic API support optional, read the API key from the environment, and handle unavailable keys, API errors, and multimodal extraction failures gracefully.
+9. Never print secrets, commit .env, or expose API keys. Check git status and ensure no secrets or prohibited dataset files are included in the submission ZIP.
+10. Do not claim a test passed unless it was actually executed. Commit and push only the verified improvements, and report the changed files, tests run, remaining limitations, and exact submission artifacts.
+
+Start by examining the existing implementation and evaluation results. Fix root causes rather than optimizing only the visible samples.
+
+Agent Response Summary:
+The wrong status was case_07 (gold INCOMPLETE, predicted COMPLETE): its only evidence of support_001 is evidence_58, a PDF that offline mode skipped; added an offline PDF text-layer reader (status 32/32). Step errors were all missing verification of already-compliant records (linking recall) plus a few extras; fixed root causes generally: catalog links as weakest existence evidence so COMPLETE is never claimed without proof (removed 2 empty COMPLETE rows), unobserved linked records become future checks only, earlier-lifecycle scoping for people with repeated requests, sync/restore repopulation as recreation paths and ownership evidence, and non-deletion requests excluded from workflow attribution. Samples now: status 32/32, step precision 100%, recall 86.0%, F1 92.5%, exact sequence 15/32. Added check_output.py (17 contract/policy checks, all pass on 518 rows and on the official sample answers), graceful API failure handling verified with an invalid key (output byte-identical to offline), package.py that builds and verifies code.zip, and rewrote problem_understanding.md separating verified facts from assumptions.
+
+Actions:
+* Edited code/evidence_extract.py, investigator.py, linker.py, planner.py, intent.py, llm.py, media.py, main.py, requirements.txt, evaluation/main.py, evaluation/evaluation_report.md, README.md, problem_understanding.md
+* Created code/evaluation/check_output.py, code/package.py
+* Ran python code/evaluation/main.py after each change; python code/main.py; python code/evaluation/check_output.py (output.csv, sample predictions, official sample answers); invalid-key fallback run; python code/package.py; pyflakes; git status / check-ignore
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=main
+repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+

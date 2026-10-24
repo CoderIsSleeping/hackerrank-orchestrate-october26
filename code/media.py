@@ -74,8 +74,15 @@ def extract_media(manifest: list[dict]) -> tuple[dict[str, list[Unit]], list[str
         path = EVIDENCE_ROOT / row["file_path"]
         if path.suffix.lower() not in MEDIA_SUFFIXES:
             continue
-        content = [llm.file_block(path), {"type": "text", "text": f"File: {path.name}. Transcribe it."}]
-        result = llm.call_json(SYSTEM_PROMPT, content, SCHEMA, effort="medium")
+        if not llm.available():
+            notes.append(f"media {row['file_id']}: skipped, Claude unavailable ({llm.disabled_reason()})")
+            continue
+        try:
+            content = [llm.file_block(path), {"type": "text", "text": f"File: {path.name}. Transcribe it."}]
+            result = llm.call_json(SYSTEM_PROMPT, content, SCHEMA, effort="medium")
+        except Exception as e:     # one unreadable file must not stop the audit
+            notes.append(f"media {row['file_id']}: extraction failed ({type(e).__name__}); file skipped")
+            continue
         page_ids = result.get("page_identifiers", [])
         out = []
         for rec in result["records"]:

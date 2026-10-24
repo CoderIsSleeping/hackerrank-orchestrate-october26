@@ -1,130 +1,94 @@
 # Problem Understanding — Ghost Data Still Exists
 
+Legend: **[V]** = verified in the files or by running code. **[A]** = an assumption, with the reason it was made.
+
 ## 1. The problem in my own words
 
-Northstar Shop's deletion workflow reports **"Complete"**, but a customer's personal data keeps living on in
-replicas, search indexes, support tickets, analytics, exports, logs and backups. Worse, sync jobs and backup
-restores can **bring deleted data back**.
+Northstar Shop's deletion workflow reports "Complete" while personal data survives in replicas, search
+indexes, support tickets, analytics, exports, logs and backups, and sync or restore jobs can bring it back.
+For each of 518 requests the agent must:
 
-I am building a **deletion-audit agent**. For each of the 518 requests it must:
+1. Decide whether the request actually authorizes deletion. If it does not, the answer is `NOT_APPLICABLE` with `[]`.
+2. Resolve every identifier the person has had (current and historical email, phone, email hash, user_id).
+3. Find every record and process tied to them, using only evidence available at or before `audit_at`.
+4. Establish each record's true state. `reported_status` and `reported_result` are claims, not proof.
+5. Apply `deletion_rules.csv`: DELETE, REDACT, ANONYMIZE, RETAIN, or tombstone (REDACT and keep `user_id`).
+6. Return `COMPLETE` or `INCOMPLETE` with ordered steps (FINDING → REMEDIATION → VERIFICATION) that cite evidence.
 
-1. **Decide whether the request really asks for deletion.** If not, the answer is `NOT_APPLICABLE` with `[]`.
-2. **Find every identifier the person has ever had**: current email, phone and email hash, plus old values from `user_audit_log.csv`.
-3. **Find every record about them** across all evidence formats, using only evidence captured **at or before `audit_at`**.
-4. **Work out the true state of each record** at `audit_at`. `reported_status` and `reported_result` are *claims*, not proof.
-5. **Apply `deletion_rules.csv`** to each record: DELETE, REDACT, ANONYMIZE, RETAIN, or tombstone (REDACT, keep `user_id`).
-6. **Decide `COMPLETE` vs `INCOMPLETE`**, then output an **ordered** plan:
-   `FINDING → REMEDIATION → VERIFICATION`, citing evidence IDs.
+## 2. Requirements (from `problem_statement.md` / `AGENTS.md`) [V]
 
-## 2. What the data actually looks like (checked, not assumed)
+- `output.csv` at repo root, header `case_id,deletion_status,steps_json`, exactly 518 rows, sorted by case_id.
+- Each step has exactly 7 keys. Phases and operations come from fixed lists, and each operation has a fixed state.
+- Within a phase, steps follow the table's operation order, then `system_id`, then `resource_id`.
+- COMPLETE: verification steps only, each citing a `file_id` / `activity_id` / `audit_id`.
+  INCOMPLETE: findings cite evidence; remediation and future verification use `""`.
+- Never cite evidence captured after `audit_at`. Never use organizer-only data. Never hardcode labels.
+- `code.zip` must include `code/evaluation/evaluation_report.md` and `usage_report.md`. The transcript is the root `log.txt`.
 
-| File | Size | What I learned |
-|---|---|---|
-| `deletion_requests.csv` | 518 cases | `reported_status`: 254 COMPLETE, 152 PARTIALLY_COMPLETE, 112 NOT_STARTED. Requests come in several languages (EN, FR, PT, ES, JA, …). |
-| `sample_output.csv` | 32 cases | **22 INCOMPLETE, 10 COMPLETE, 0 NOT_APPLICABLE.** |
-| `user_identities.csv` | 850 users | Current name, email, phone, email_hash. |
-| `user_audit_log.csv` | 306 changes | Changes to `email`, `email_hash` and `phone`. Old values are how "ghost" records are found. |
-| `system_activity.csv` | 4,011 events | 17 event types (DELETE, SYNC, INDEX, RESTORE_BACKUP, DISABLE_DATA_FLOW, …). **721 FAILED, 376 PARTIAL.** Global stream, mostly about other people. |
-| `deletion_rules.csv` | 15 rules | One rule per data category (see §4). |
-| `evidence_files.csv` | 94 files | 24 SQL snapshots, 26 logs, 29 JSON/TXT records, 4 PDFs, 11 PNG screenshots. |
+## 3. What the data actually contains [V]
 
-**Key observation:** every evidence format eventually states the same fact:
-`(captured_at, system_id, resource_id, data_category, observed_state, identifier)`.
-For example, the handover TXT (`evidence_03`) has lines like
-`account_service | account_4248 | USER_PROFILE | NOT_FOUND | novak.tomasz@icloud.com`.
-SQL replicas, logs, JSON and screenshots state the same thing in different formats.
+| Item | Finding |
+|---|---|
+| Requests | 518 to predict; `reported_status` 254 COMPLETE / 152 PARTIALLY_COMPLETE / 112 NOT_STARTED; several languages. **10 do not ask for deletion** (case_533–542: correction, export, access, marketing opt-out). |
+| Samples | 32 with answers: 22 INCOMPLETE, 10 COMPLETE, **0 NOT_APPLICABLE**. |
+| Identity | 850 users; 306 audit-log changes to email, email_hash, phone. `email_hash` = sha256(email). |
+| Activity | 4,011 events, mostly about other people. Deletion-workflow rows name a resource but **never a person**; 550 requests share only **250** distinct `reported_at` values. |
+| Evidence | 94 files: 24 SQL snapshots, 26 logs, 29 JSON/TXT, 4 PDFs (all with a text layer), 11 PNG screenshots. Every format reduces to one fact type: *(time, system, resource, category, state, identifiers)*. |
+| Repeat requesters | 3 people filed two requests each (user_07, user_17, user_18); each request covers its own lifecycle. |
+| Recreation paths | 32 sync/restore events state "…repopulated downstream resource X". |
 
-## 3. Traps and missing pieces I found
+## 4. Traps found (each confirmed on a sample or in the files) [V]
 
-1. **Reported status is a lie by design.** Sample `case_11` reports `COMPLETE`, but the truth is `INCOMPLETE`:
-   a search entry, analytics and support records are still identifiable, and a data flow is still active.
-2. **Historical identifiers.** Records may only mention an *old* email, phone or hash. Searching only the current email misses them.
-3. **Identifier formatting differs.** For example `CHOI.JIHOON94@GMAIL.COM` vs lowercase, and phone numbers with or without spaces.
-   Everything must be normalized before matching.
-4. **Time cutoff.** Evidence captured after `audit_at` must be ignored. The boundary is inclusive:
-   `evidence_03` is captured exactly at `case_11`'s `audit_at` and is cited.
-5. **Latest state wins.** Older snapshots can show a record present and newer ones absent, or the reverse when a sync recreates it.
-   The decision uses the **latest evidence ≤ audit_at per resource**.
-6. **Replication drift.** The primary DB can be clean while a read, reporting or failover replica still holds the row.
-7. **Recreation paths.** An ACTIVE data flow or an unblocked backup restore makes a case INCOMPLETE even if all records are gone.
-8. **Over-deleting is also wrong.** `SECURITY_AUDIT_LOG`, `LEGAL_HOLD_RECORD` and `BACKUP_ARCHIVE` must be **retained**, and verified PRESENT.
-   The account tombstone is **REDACTED, not deleted**.
-9. **Verification covers everything relevant**, not just what was fixed. In `case_11` the plan also verifies the already-deleted
-   account (ABSENT) and the retained audit record (PRESENT).
-10. **Multimodal evidence.** 4 PDFs and 11 screenshots hold facts that text search can't see. They need OCR or a vision model.
-11. **No NOT_APPLICABLE example in the samples.** So the intent classifier can't be validated on the given samples.
-    I must build my own test cases (which also satisfies the "≥3 custom evaluation cases" requirement).
-12. **Decoys.** Global files contain unrelated people and look-alike identifiers. A match has to be grounded in an exact normalized identifier
-    or a resource ID linked to the subject.
+1. `reported_status` is wrong by design (case_11 says COMPLETE; truth is INCOMPLETE).
+2. Records may carry only an old email, phone or hash; identifiers vary in case and spacing.
+3. Time cutoff is inclusive, and a file's *manifest capture time* matters as well as the snapshot time inside it.
+4. Ghost copies: a record seen in a failover replica outranks its absence from a later bulk listing.
+5. Over-deletion is wrong: audit logs, legal holds and backups are retained (verified PRESENT / BLOCKED).
+6. Support records split: conversations with shared context are REDACTED; attachments are DELETED.
+7. Verification covers every relevant record, including ones that are already compliant.
+8. Some evidence exists only in PDFs and screenshots.
+9. Decoys: other people's workflows run in the same minutes as the subject's.
 
-## 4. Policy table (from `deletion_rules.csv`)
-
-| Category | Action | Remediation op | Verification op |
-|---|---|---|---|
-| USER_PROFILE, SECONDARY_IDENTIFIER, SEARCH_INDEX_ENTRY, CACHE_ENTRY, USER_EXPORT, MARKETING_PROFILE | DELETE | `DELETE_RECORD` | `VERIFY_RECORD_ABSENT` |
-| SUPPORT_ATTACHMENT (subject-only) | DELETE | `DELETE_RECORD` | `VERIFY_RECORD_ABSENT` |
-| SUPPORT_MESSAGE (shared context), EMAIL_DELIVERY_LOG (has email), ACCOUNT_TOMBSTONE | REDACT | `REDACT_RECORD` | `VERIFY_RECORD_REDACTED` |
-| ANALYTICS_PROFILE, PRODUCT_TELEMETRY (attributable) | ANONYMIZE | `ANONYMIZE_RECORD` | `VERIFY_RECORD_ANONYMIZED` |
-| SECURITY_AUDIT_LOG, LEGAL_HOLD_RECORD, BACKUP_ARCHIVE | RETAIN | none (BLOCK_RESTORE for a backup) | `VERIFY_RECORD_PRESENT` |
-| Active data flow | — | `DISABLE_DATA_FLOW` | `VERIFY_DATA_FLOW_DISABLED` |
-| Restore risk | — | `BLOCK_RESTORE` | `VERIFY_RESTORE_BLOCKED` |
-
-## 5. How we are solving it — architecture
-
-The design principle: **the LLM handles judgement, and code handles anything that must be exact.**
-The scoring rewards exact IDs, exact order and exact evidence. Those must be deterministic and explainable.
+## 5. Architecture
 
 ```
-            ┌───────────────────────── one-time, cached ─────────────────────────┐
-evidence/ → │ Extractors: SQL(sqlite) · logs · JSON/TXT · PDF text · PNG (VLM/OCR) │ → observations table
-            └────────────────────────────────────────────────────────────────────┘
-request ─→ 1. Intent classifier (LLM, multilingual, + rule check)  → NOT_APPLICABLE? → []
-        ─→ 2. Identity resolver (current + audit history, normalized)  → identifier set
-        ─→ 3. Evidence matcher (identifiers → observations, ≤ audit_at)  → candidate records
-        ─→ 4. State reconstructor (latest observation per resource; activity as claims)
-        ─→ 5. Policy engine (deletion_rules → required treatment per record)
-        ─→ 6. Planner (findings → remediation → verification, contract ordering)
-        ─→ 7. Validator (schema, ops/states allowed, step_no, evidence ≤ audit_at)  → output.csv
+evidence/ ─► evidence_extract.py  SQL (sqlite) · logs (trace-grouped) · JSON · TXT · PDF text layer (offline)
+          └► media.py (Claude)    screenshots/PDFs → same unit shape, validated          ─► units + complete listings
+request   ─► intent.py            Claude (multilingual) + conservative keyword rule (fallback / cross-check)
+          ─► identity.py          email → user_id → every historical identifier
+          ─► linker.py            joint attribution of records to people over ALL requests
+          ─► investigator.py      state at audit_at · category · evidence to cite
+          ─► planner.py           deletion_rules.csv → ordered findings / remediation / verification
+          ─► validator.py         per-row contract checks (run stops on any violation)
+evaluation/main.py · check_output.py   sample metrics, custom cases, 17 contract/policy checks on output.csv
 ```
 
-Where the AI makes **bounded decisions**:
-- **Intent** of a multilingual request (deletion vs access/export/correction/opt-out). The model returns a label and a short rationale,
-  validated against an enum.
-- **Multimodal extraction** from PDFs and screenshots into the same observation schema. The output is validated: every resource_id or
-  identifier must actually look like one.
-- **Ambiguous evidence**: when two sources disagree or a category is unclear, the model is asked with only that case's
-  evidence, and must cite the evidence ID it relied on.
+## 6. Design decisions and why
 
-Hard rules stay in code and **cannot be overridden by the model**: the time cutoff, the allowed operations and states, the ordering, retain-not-delete,
-and that evidence for COMPLETE verification must exist and be ≤ audit_at.
+| Decision | Why |
+|---|---|
+| Claude for judgement only (intent, image transcription); deterministic code for IDs, time, policy, order [V] | The grader rewards exact IDs, order and evidence; code is reproducible and explainable. |
+| Global linker instead of per-case time windows [V] | Time windows linked 30 strangers' records to one case. The solver fixes grounded edges, excludes records grounded to others, uses per-template time windows, one resource per type, one primary profile per case, and **leaves ties unlinked**. |
+| Evidence strength: direct observation > absence from a complete listing > catalog link [V] | Catches ghost copies; avoids claiming COMPLETE without proof. |
+| Category: evidence `record_type` > the workflow's attempted action > resource prefix [V] | Fixes analytics records the workflow deletes rather than anonymizes, and the support split. |
+| Earlier-lifecycle scoping for repeat requesters [V] | Removed extra steps on case_07 / case_17 without per-case code. |
+| Sync/restore repopulation → recreation path and shared ownership [A] | Required by the problem statement; no sample contains such an event, so the gain is unmeasured. |
+| Strict time cutoff, even for identity links [A] | AGENTS.md: later evidence "must not change the answer". Costs some recall (audit records visible only later). |
+| Offline-first; Claude optional, with every failure falling back [V] | Tested with an invalid key: Claude is disabled, the run finishes, and the output is byte-identical to offline. |
 
-## 6. Evaluation plan (honest by design)
+## 7. Evaluation (32 samples, offline run) [V]
 
-- `code/evaluation/main.py` compares our output on the 32 samples with `sample_output.csv`:
-  **case status accuracy, step-level exact match, field-level accuracy, sequence accuracy**.
-- **No sample answers are used as prompt examples or rules.** The samples are only used to score, so the metric isn't leaked.
-- **≥3 custom cases** built by me: a NOT_APPLICABLE request (export or access), a historical-email-only match,
-  evidence after `audit_at` that must be ignored, a retained record that must not be deleted.
-- A failure log in `evaluation_report.md`: what broke, why, and what I changed.
-- `usage_report.md`: provider, model, calls, input/output tokens, cost total and per request, all from real counters in the code.
+Status **32/32**. Step precision **100%**, recall **86.0%**, F1 **92.5%**. Exact sequence **15/32**.
+Custom cases C1–C4 pass, and all 17 contract checks pass on the 518-row `output.csv`.
+Details and the failure → fix history are in `code/evaluation/evaluation_report.md`.
 
-## 7. What it takes to stand out
+## 8. Remaining risks
 
-1. **A transcript that shows my thinking.** Every prompt logged word for word to `log.txt` (plan, build, debug, verify).
-2. **An evidence-grounded agent.** Every finding cites the exact file, activity or audit ID, and nothing is padded.
-3. **Deterministic and reproducible.** Same input gives the same output. LLM responses are cached, and JSON serialization is stable.
-4. **Token-efficient.** Evidence is extracted once and cached, the LLM is called only where judgement is needed, and the cost is reported.
-5. **Honest metrics.** "X/32 on samples" plus the failure list. Never "perfect".
-6. **Interview-ready.** Every constant and rule explained: input → rule → file:line → why → what would change it.
-
-## 8. Required deliverables checklist
-
-- [ ] `output.csv` at repo root: header `case_id,deletion_status,steps_json`, **518 rows**, sorted by `case_id`.
-- [ ] Valid JSON arrays, `step_no` from 1 with no gaps, phase order respected, only allowed ops and states.
-- [ ] COMPLETE: verification steps cite evidence. INCOMPLETE: remediation and verification have `evidence_id: ""`.
-- [ ] `code/` runnable from the terminal: `python code/main.py`.
-- [ ] `README.md` with setup and run steps.
-- [ ] `code/evaluation/evaluation_report.md` and `code/evaluation/usage_report.md`.
-- [ ] `code.zip` with no dataset, venv, caches, nested zips or secrets.
-- [ ] `log.txt` (chat transcript) with every turn logged, each with `tool=` and `model=`.
-- [ ] `agent-trace.zip` (Claude Code session JSONL + `/export`).
+- **Recall on workflow-only records** (primary accounts, anonymized analytics) when cases share a timestamp.
+  The solver refuses to guess, so these verification steps are missing. [V]
+- **Screenshots** are only read with an API key. Hidden cases whose only evidence is a PNG fall back to
+  catalog links or nothing. [V]
+- **Hidden-set distribution** may differ from the 32 samples (e.g. more NOT_APPLICABLE or restore-path cases). [A]
+- **Identity conflicts** (catalog says person A, screenshot shows person B) follow the catalog. [A]
+- Sample answers show **one evidence file per case** in many cases. The citation rule (prefer the file
+  that observes most of the case's records) reproduces this on the samples but is inferred. [A]

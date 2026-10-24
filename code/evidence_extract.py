@@ -263,6 +263,38 @@ def extract_text(file_id: str, captured_at: str, text: str) -> list[Unit]:
     return units
 
 
+# ---------------------------------------------------------------- PDF text layer
+
+def extract_pdf(file_id: str, captured_at: str, path) -> list[Unit]:
+    """Local, offline reading of a PDF's text layer (business documents: attachments, extracts).
+
+    Every resource id in the document becomes a unit that records the document as showing the record.
+    Grounding text: the whole document when it concerns a single person; otherwise only the lines
+    around each id, so a multi-person register cannot tie one person's identifiers to another's record.
+    """
+    try:
+        from pypdf import PdfReader
+        text = "\n".join((p.extract_text() or "") for p in PdfReader(str(path)).pages)
+    except Exception:            # missing library or unreadable file: the media pass may still cover it
+        return []
+    from identity import text_tokens
+    people = {t for t in text_tokens(text) if t.startswith(("e:", "u:"))}
+    lines = text.splitlines()
+    units = []
+    for rid in sorted(set(RESOURCE_RE.findall(text))):
+        if len(people) <= 2:            # one subject: an email and/or a user_id
+            context = text
+        else:
+            idx = [i for i, l in enumerate(lines) if rid in l]
+            context = "\n".join(lines[max(0, i - 3): i + 4] for i in idx) if idx else ""
+        record_type = "SUPPORT_ATTACHMENT" if "attachment" in text.lower() and rid.startswith("support_") else ""
+        fields = {"_listed": True, "result": "FOUND", "document": path.name}
+        if record_type:
+            fields["record_type"] = record_type
+        units.append(Unit(file_id, captured_at, captured_at, rid, fields, "document", context))
+    return units
+
+
 # ---------------------------------------------------------------- driver
 
 def extract_all(media_units: dict | None = None) -> tuple[list[Unit], list[Scope], list[dict]]:
@@ -274,6 +306,8 @@ def extract_all(media_units: dict | None = None) -> tuple[list[Unit], list[Scope
         fid, path, captured = row["file_id"], EVIDENCE_ROOT / row["file_path"], row["captured_at"]
         suffix = path.suffix.lower()
         if suffix in (".pdf", ".png", ".jpg", ".jpeg"):
+            if suffix == ".pdf":
+                units.extend(extract_pdf(fid, captured, path))
             units.extend((media_units or {}).get(fid, []))
             continue
         text = path.read_text(encoding="utf-8")

@@ -148,7 +148,8 @@ def custom_cases(tmp: Path) -> list[tuple[str, bool, str]]:
 
 # ------------------------------------------------------------------ report
 
-def render(metrics: dict, failures: list[str], custom: list[tuple[str, bool, str]], summary: dict) -> str:
+def render(metrics: dict, failures: list[str], custom: list[tuple[str, bool, str]], summary: dict,
+           checks: list[tuple[str, int, list]] | None = None) -> str:
     fa = metrics["field_accuracy"]
     lines = [
         f"Run on the {metrics['cases']} public samples (`dataset/sample_deletion_requests.csv`), "
@@ -174,6 +175,12 @@ def render(metrics: dict, failures: list[str], custom: list[tuple[str, bool, str
         "|---|---|---|",
         *[f"| {name} | {'PASS' if ok else 'FAIL'} | {detail} |" for name, ok, detail in custom],
         "",
+        "Contract and policy checks on the submitted `output.csv` (all 518 rows, `check_output.py`):",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+        *[f"| {name} | {'PASS' if n == 0 else f'FAIL ({n})'} |" for name, n, _ in (checks or [])],
+        "",
         f"Remaining sample mismatches ({len(failures)}):",
         "",
         *[f"- {f}" for f in failures],
@@ -188,7 +195,10 @@ def main() -> None:
         summary = run(DATASET / "sample_deletion_requests.csv", pred_path, verbose=False)
         metrics, failures = score(load(pred_path), load(DATASET / "sample_output.csv"))
         custom = custom_cases(tmp)
-    block = render(metrics, failures, custom, summary)
+    from config import OUTPUT_PATH
+    from check_output import check
+    checks = check(OUTPUT_PATH, DATASET / "deletion_requests.csv") if OUTPUT_PATH.exists() else []
+    block = render(metrics, failures, custom, summary, checks)
     print(block)
     text = REPORT.read_text(encoding="utf-8") if REPORT.exists() else "<!-- AUTO:BEGIN -->\n<!-- AUTO:END -->\n"
     head, _, rest = text.partition("<!-- AUTO:BEGIN -->")

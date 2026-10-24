@@ -50,10 +50,23 @@ class Usage:
 
 USAGE = Usage()
 _client = None
+_disabled_reason: str | None = None   # set after an unrecoverable API error; the run continues offline
 
 
 def available() -> bool:
+    if _disabled_reason:
+        return False
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
+def disable(reason: str) -> None:
+    """Switch the rest of the run to offline mode (never includes the key in the reason)."""
+    global _disabled_reason
+    _disabled_reason = reason
+
+
+def disabled_reason() -> str | None:
+    return _disabled_reason
 
 
 def _get_client():
@@ -99,10 +112,13 @@ def call_json(system: str, content: list, schema: dict, *, effort: str = "low",
             betas=[FALLBACK_BETA],
             fallbacks="default",
         )
-    except anthropic.AuthenticationError as e:
-        raise LLMUnavailable("Claude API key rejected") from e
-    except anthropic.BadRequestError:
-        raise
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
+        disable("API key rejected")
+        raise LLMUnavailable("API key rejected") from e
+    except (anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.InternalServerError) as e:
+        # The SDK already retried with backoff; give up on Claude for this run rather than stall.
+        disable(f"API unreachable after retries ({type(e).__name__})")
+        raise LLMUnavailable(type(e).__name__) from e
     if response.stop_reason == "refusal":
         raise RuntimeError(f"Claude declined the request: {getattr(response.stop_details, 'category', None)}")
     if response.stop_reason == "max_tokens":

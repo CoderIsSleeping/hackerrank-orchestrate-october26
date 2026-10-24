@@ -47,10 +47,14 @@ class Investigator:
         self.scopes = scopes
         with open(DATASET / "system_activity.csv", encoding="utf-8") as f:
             self.activity = list(csv.DictReader(f))
+        self.links_by_resource: dict[str, list[dict]] = defaultdict(list)
+        for a in self.activity:
+            if a["event_type"] == "LINK_RESOURCE_IDENTITY":
+                self.links_by_resource[a["resource_id"]].append(a)
 
-    def attach_linker(self, requests: list[dict]) -> None:
+    def attach_linker(self, requests: list[dict], no_workflow: set | None = None) -> None:
         """Resource linking is solved jointly over every request (see linker.py)."""
-        self.linker = GlobalLinker(requests, self.units, self.activity, self.identity)
+        self.linker = GlobalLinker(requests, self.units, self.activity, self.identity, no_workflow)
 
     # ------------------------------------------------------------ state
 
@@ -70,6 +74,12 @@ class Investigator:
         for (fid, t), group in by_file.items():
             if not any(resource_id in s.resource_ids for s in group):
                 obs.append(Observation(t, t, _absent_state(category), fid, "scope"))
+        # A data-catalog link states that the record exists and belongs to a person. It is the weakest
+        # evidence (ranked last) and says nothing about flows or restore settings.
+        if category not in ("DATA_FLOW", "BACKUP_ARCHIVE"):
+            for a in self.links_by_resource.get(resource_id, []):
+                if a["event_time"] <= audit_at:
+                    obs.append(Observation(a["event_time"], a["event_time"], "IDENTIFIABLE", a["activity_id"], "catalog"))
         return obs
 
     def workflow_action(self, resource_id: str, audit_at: str) -> str | None:
@@ -98,19 +108,26 @@ class Investigator:
                 file_rank[fid] += 1
 
         for rid, (system, category, obs) in per_resource.items():
-            if not obs:
-                result.notes.append(f"{rid}: no state evidence <= audit_at")
-                continue
-            # A record seen directly outranks its mere absence from a bulk listing; listings only
-            # decide when nothing observed the record itself.
-            direct = [o for o in obs if o.origin == "unit"] or obs
-            latest = max(direct, key=lambda o: (o.time, o.captured_at))
-            same = [o for o in direct if o.state == latest.state]
-            cited = max(same, key=lambda o: (file_rank.get(o.evidence_id, 0), o.time))
             action = self.rules.get(category, "")
             hinted = self.workflow_action(rid, audit_at)
             if hinted and action in ("DELETE", "REDACT", "ANONYMIZE") and not _has_record_type(obs, self.units_by_resource[rid]):
                 action = hinted
+            if not obs:
+                # Linked (e.g. by its deletion workflow) but never observed: its final state can still be
+                # required as a post-remediation check, but it can never support a COMPLETE verdict.
+                d = decide(category, action, _absent_state(category) if action != "RETAIN" else "PRESENT")
+                if d:
+                    result.decisions.append(Decision(system, rid, None, None, d[2], "", observed=False))
+                result.notes.append(f"{rid}: no state evidence <= audit_at")
+                continue
+            # Evidence strength: a record seen directly > its absence from a complete listing > a catalog link.
+            for origin in ("unit", "scope", "catalog"):
+                ranked = [o for o in obs if o.origin == origin]
+                if ranked:
+                    break
+            latest = max(ranked, key=lambda o: (o.time, o.captured_at))
+            same = [o for o in ranked if o.state == latest.state]
+            cited = max(same, key=lambda o: (file_rank.get(o.evidence_id, 0), o.time))
             d = decide(category, action, latest.state)
             if d is None:
                 result.notes.append(f"{rid}: no rule for {category}")

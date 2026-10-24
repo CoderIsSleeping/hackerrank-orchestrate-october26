@@ -38,6 +38,7 @@ class Decision:
     remediation: str | None
     verification: str
     evidence_id: str           # evidence proving the current state
+    observed: bool = True      # False: linked but no state evidence -> future check only
 
 
 # required action -> (finding, remediation, verification) when the record is NOT yet compliant,
@@ -72,6 +73,8 @@ def build_steps(decisions: list[Decision]) -> tuple[str, list[dict]]:
     incomplete = any(d.finding for d in decisions)
     rows: list[tuple[str, str, str, str, str]] = []   # phase, op, system, resource, evidence
     for d in decisions:
+        if not d.observed and not incomplete:
+            continue                   # unproven state cannot back a COMPLETE verification
         if incomplete:
             if d.finding:
                 rows.append(("FINDING", d.finding, d.system_id, d.resource_id, d.evidence_id))

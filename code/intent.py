@@ -86,7 +86,13 @@ def classify(texts: list[str]) -> tuple[dict[str, dict], list[str]]:
         for start in range(0, len(unique), BATCH_SIZE):
             batch = unique[start:start + BATCH_SIZE]
             items = "\n".join(f'<request id="t{i}">{t}</request>' for i, t in enumerate(batch))
-            result = llm.call_json(SYSTEM_PROMPT, [{"type": "text", "text": items}], SCHEMA, effort="low")
+            if not llm.available():
+                break
+            try:
+                result = llm.call_json(SYSTEM_PROMPT, [{"type": "text", "text": items}], SCHEMA, effort="low")
+            except Exception as e:     # fall back to the keyword rule for this batch
+                notes.append(f"intent: Claude batch failed ({type(e).__name__}); keyword rule used")
+                continue
             by_id = {r["id"]: r for r in result["results"]}
             for i, t in enumerate(batch):
                 r = by_id.get(f"t{i}")

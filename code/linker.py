@@ -19,6 +19,7 @@ Events that stay ambiguous are left unlinked: the solver does not guess.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime
 
@@ -26,6 +27,7 @@ from evidence_extract import Unit
 from identity import IdentityIndex, Subject, text_tokens
 
 WORKFLOW_ACTORS = {"deletion_worker"}
+REPOPULATED_RE = re.compile(r"repopulated downstream resource (\w+)")
 
 # Each workflow event template lands at a characteristic offset from its case's reported_at.
 # Offsets observed on the 32 public samples (minutes), padded by ~10 min on each side:
@@ -67,13 +69,23 @@ def slot_of(event: dict) -> str:
 
 
 class GlobalLinker:
-    def __init__(self, requests: list[dict], units: list[Unit], activity: list[dict], identity: IdentityIndex):
+    def __init__(self, requests: list[dict], units: list[Unit], activity: list[dict], identity: IdentityIndex,
+                 no_workflow: set | None = None):
+        # Requests that do not authorize deletion never start a deletion workflow, so they cannot own
+        # workflow events (the activity log records them as classified non-deletion).
+        self.no_workflow = no_workflow or set()
         self.requests = {r["case_id"]: r for r in requests}
         self.subjects: dict[str, Subject] = {c: identity.resolve(r["email"])[0] for c, r in self.requests.items()}
         self.units = units
         self.activity = activity
         self.grounded: dict[str, dict[str, str]] = {}      # case -> resource -> evidence/activity id
+        self.last_seen: dict[str, dict[str, str]] = {}     # case -> resource -> latest grounding time
         self.assigned: dict[str, dict[str, str]] = defaultdict(dict)   # case -> resource -> activity id
+        self.repopulated_by: dict[str, list] = defaultdict(list)   # downstream record -> (source, activity, time)
+        for a in activity:
+            m = REPOPULATED_RE.search(a["details"])
+            if m and a["event_type"] in ("SYNC_RECORD", "RESTORE_BACKUP", "IMPORT_RECORD"):
+                self.repopulated_by[m.group(1)].append((a["resource_id"], a["activity_id"], a["event_time"]))
         self._ground_all()
         self._solve()
 
@@ -92,15 +104,19 @@ class GlobalLinker:
         for case_id, req in self.requests.items():
             subject, audit_at = self.subjects[case_id], req["audit_at"]
             links: dict[str, str] = {}
+            last_seen: dict[str, str] = {}
             if subject.user_id is not None:
                 hits = [h for tok in subject.tokens() for h in by_token.get(tok, [])]
                 for kind, x in sorted(hits, key=lambda h: (h[1].observed_at, h[1].file_id) if h[0] == "unit"
                                       else (h[1]["event_time"], h[1]["activity_id"])):
                     if kind == "unit" and x.captured_at <= audit_at and x.observed_at <= audit_at:
                         links.setdefault(x.resource_id, x.file_id)
+                        last_seen[x.resource_id] = max(last_seen.get(x.resource_id, ""), x.observed_at)
                     elif kind == "activity" and x["event_time"] <= audit_at:
                         links.setdefault(x["resource_id"], x["activity_id"])
+                        last_seen[x["resource_id"]] = max(last_seen.get(x["resource_id"], ""), x["event_time"])
             self.grounded[case_id] = links
+            self.last_seen[case_id] = last_seen
 
     # --------------------------------------------------------------- solver
 
@@ -109,6 +125,14 @@ class GlobalLinker:
         for case_id, links in self.grounded.items():
             for rid in links:
                 owners_by_resource[rid].add(self.subjects[case_id].user_id)
+        # A record repopulated from a grounded source belongs to the same person as that source
+        # (and vice versa), which keeps the solver from handing it to an unrelated workflow.
+        for dst, sources in self.repopulated_by.items():
+            for src, _, _ in sources:
+                shared = owners_by_resource.get(src, set()) | owners_by_resource.get(dst, set())
+                if shared:
+                    owners_by_resource[src] |= shared
+                    owners_by_resource[dst] |= shared
 
         events = [a for a in self.activity if a["source_system"] in WORKFLOW_ACTORS]
         candidates: dict[str, set] = {}
@@ -117,6 +141,8 @@ class GlobalLinker:
             _, lo, hi = template_of(a["details"])
             cands = set()
             for case_id, req in self.requests.items():
+                if case_id in self.no_workflow:
+                    continue
                 offset = (t - _t(req["reported_at"])).total_seconds() / 60
                 if _t(req["requested_at"]) <= t <= _t(req["audit_at"]) and lo <= offset <= hi:
                     owners = owners_by_resource.get(a["resource_id"])
@@ -177,8 +203,27 @@ class GlobalLinker:
                     candidates[unowned[0]] = {c}
                     changed = True
 
+    def earlier_audit(self, case_id: str) -> str:
+        """Latest audit_at of an earlier request by the same person, or "" if this is their first."""
+        req, uid = self.requests[case_id], self.subjects[case_id].user_id
+        prior = [r["audit_at"] for c, r in self.requests.items()
+                 if c != case_id and uid and self.subjects[c].user_id == uid and r["audit_at"] < req["requested_at"]]
+        return max(prior, default="")
+
     def links_for(self, case_id: str) -> dict[str, str]:
-        out = dict(self.grounded.get(case_id, {}))
+        # A person who asked before has an earlier lifecycle: resources evidenced only up to that earlier
+        # audit belong to the earlier request, unless they are evidenced again afterwards.
+        cutoff = self.earlier_audit(case_id)
+        seen = self.last_seen.get(case_id, {})
+        out = {rid: src for rid, src in self.grounded.get(case_id, {}).items()
+               if not cutoff or seen.get(rid, "") > cutoff}
         for rid, aid in self.assigned.get(case_id, {}).items():
             out.setdefault(rid, aid)
+        # Recreation paths: a sync or restore that repopulated one of the subject's records is a process
+        # that can bring the data back, so its source (data flow / backup) is in scope too.
+        audit_at = self.requests[case_id]["audit_at"]
+        for rid in list(out):
+            for src, aid, t in self.repopulated_by.get(rid, []):
+                if t <= audit_at:
+                    out.setdefault(src, aid)
         return out
