@@ -97,10 +97,12 @@ def run(requests_path: Path, out_path: Path, verbose: bool = True) -> dict:
         "seconds": round(time.time() - started, 1),
         "usage": llm.USAGE.as_dict(),
         "llm_available": llm.available(),
+        "llm_provider": f"{llm.provider()}:{llm.model_name()}" if llm.provider() else "none (offline)",
+        "llm_disabled_reason": llm.disabled_reason(),
         "notes": media_notes + intent_notes,
     }
     log(f"wrote {len(rows)} rows to {out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
-    log(json.dumps({k: summary[k] for k in ("status_counts", "seconds", "usage", "llm_available")}))
+    log(json.dumps({k: summary[k] for k in ("status_counts", "seconds", "usage", "llm_provider", "llm_disabled_reason")}))
     for n in summary["notes"][:20]:
         log("note:", n)
     summary["trace"] = trace
@@ -115,20 +117,23 @@ def write_usage_report(summary: dict, path: Path) -> None:
         "# Usage report - final full-dataset run",
         "",
         f"Run: `python code/main.py` on `dataset/deletion_requests.csv` ({n} requests) -> `output.csv`, "
-        f"{summary['seconds']} s wall time. Claude available: {summary['llm_available']}.",
+        f"{summary['seconds']} s wall time. LLM provider: {summary['llm_provider']}"
+        + (f" (disabled during run: {summary['llm_disabled_reason']})" if summary.get('llm_disabled_reason') else "") + ".",
         "",
         "Token counts come from `response.usage` of every Claude response the run used (`code/llm.py`).",
         "Responses are cached on disk by request hash, so a re-run replays them: *calls* counts every",
         "response used by the run, *live calls* only those sent during this particular execution.",
-        f"Prices: {MODEL} at ${PRICE_IN_PER_M:.2f} / 1M input and ${PRICE_OUT_PER_M:.2f} / 1M output tokens.",
+        f"Prices: {MODEL} at ${PRICE_IN_PER_M:.2f} / 1M input and ${PRICE_OUT_PER_M:.2f} / 1M output tokens; "
+        "Gemini calls were made on the free tier and billed $0 (Gemini output tokens include thinking tokens).",
         "",
         "| Provider | Model | Calls | Live calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) |",
         "|---|---|---|---|---|---|---|---|",
     ]
     tot = {"calls": 0, "live_calls": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0}
     for model, u in sorted(usage.items()):
-        cost = u["input_tokens"] / 1e6 * PRICE_IN_PER_M + u["output_tokens"] / 1e6 * PRICE_OUT_PER_M
-        lines.append(f"| Anthropic | `{model}` | {u['calls']} | {u['live_calls']} | {u['input_tokens']:,} | "
+        is_gemini = model.startswith("gemini")
+        cost = 0.0 if is_gemini else u["input_tokens"] / 1e6 * PRICE_IN_PER_M + u["output_tokens"] / 1e6 * PRICE_OUT_PER_M
+        lines.append(f"| {'Google (free tier)' if is_gemini else 'Anthropic'} | `{model}` | {u['calls']} | {u['live_calls']} | {u['input_tokens']:,} | "
                      f"{u['output_tokens']:,} | {u['input_tokens'] + u['output_tokens']:,} | {cost:.4f} |")
         for k in ("calls", "live_calls", "input_tokens", "output_tokens"):
             tot[k] += u[k]

@@ -14,6 +14,11 @@ python code/main.py             # audits dataset/deletion_requests.csv -> output
 python code/evaluation/main.py  # scores the 32 samples + custom cases -> code/evaluation/evaluation_report.md
 ```
 
+**LLM providers (optional).** `ANTHROPIC_API_KEY` → Claude (`claude-opus-5-5`); otherwise `GEMINI_API_KEY` →
+Gemini (`gemini-2.5-flash`, override with `GEMINI_MODEL`); otherwise offline. Force a choice with
+`LLM_PROVIDER=anthropic|gemini|none`. Same prompts, schemas, validation and cache for both. Before any full
+run, `python code/evaluation/llm_smoke_test.py` makes a bounded live test (11 screenshots + 19 intents).
+
 Python 3.10+. Paths resolve from the repository root, so this works on Windows, macOS and Linux.
 Without a key the agent still runs end to end. It falls back to a keyword intent rule and skips
 PDFs/screenshots, and the run summary says so. Claude responses are cached in `code/.cache/` by request

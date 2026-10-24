@@ -142,3 +142,23 @@ scores right after the fix.
   conflicting identities without a labelled example.
 - **Recreation-path rule is not validated by the samples.** No sample case contains a sync/restore
   repopulation event, so rule 11(a) is justified by the problem statement, not by a measured gain.
+
+## Optional LLM provider: Gemini free-tier test (measured)
+
+Setup: `gemini-2.5-flash` via `GEMINI_API_KEY` (other flash models listed by the Models API returned
+503 "high demand" when probed). Same prompts, JSON schemas and validation as the Claude path.
+
+| Step | Live calls | Result |
+|---|---|---|
+| Smoke test: 11 PNG screenshots | 11 | 24 records; **0 schema/evidence violations** (id pattern, state enum, timestamp <= capture time). 20 non-platform ids (order numbers, ticket refs, file names) rejected by the validator; 1 file name mapped to `object_19` through a data-catalog alias. Unknown identifiers (staff/business emails, look-alike decoy `g.silva76.jr@gmail.com`) correctly not matched to any user. |
+| Smoke test: 19 multilingual intents (10 real non-deletion, 6 deletion in FR/PT/ES/EN, 3 custom) | 1 | 19/19 match expected labels; 19/19 agree with the offline keyword rule. |
+| Sample evaluation (32 cases) with Gemini enabled | 8 | Quota hit mid-run: `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, **limit 20 requests/day** (retry after ~15 h). The provider disabled itself and the remaining intent batch fell back to the keyword rule, as designed. |
+
+Total today: 20 live calls, 18,705 input + 59,264 output tokens (output includes thinking), $0 billed (free tier).
+
+**Comparison with the offline baseline (32 samples):** identical. Status 32/32, step precision 100%,
+recall 86.0%, F1 92.5%, sequence 15/32 in both runs. The remaining sample errors are linking-recall gaps
+(section above) that screenshots and intent do not affect, so **no accuracy gain from Gemini is shown**.
+A full 518-request run with Gemini was not performed (daily quota; it was also held back pending a
+decision about sending request data to a third-party API). The submitted `output.csv` is the offline,
+key-free, reproducible run.

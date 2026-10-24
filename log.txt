@@ -147,3 +147,35 @@ repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
 worktree=main
 parent_agent=none
 
+## [2026-10-24T21:08:27+05:30] Optional Gemini provider, bounded live test, offline comparison
+
+User Prompt (verbatim, secrets redacted):
+[REDACTED]
+
+I want to test multimodal extraction using Google's Gemini API free tier instead of purchasing Anthropic credits.
+
+Inspect the existing media.py and intent.py implementations first. Add an optional Gemini provider using GEMINI_API_KEY, preserving the existing offline fallback and current Anthropic support. Do not rewrite the working pipeline or change the output schema.
+
+Use a currently available Gemini model that supports image and text inputs and is eligible for the free tier in my project. Verify the model and API configuration before making calls.
+
+Test on the 11 supplied PNG screenshots and a small representative set of multilingual deletion-intent requests first. Validate every extracted observation against the existing schema and evidence constraints.
+
+Report actual API calls, errors, quota limitations, and evaluation results. Compare against the existing offline baseline. Do not process the entire dataset with the API until the small test succeeds. Never expose or commit either API key, and do not claim that Gemini improves accuracy unless evaluation demonstrates it.
+
+Agent Response Summary:
+Stored the pasted Gemini key only in the git-ignored .env (never printed, logged or committed) and verified access via the Models API; probing showed gemini-3.8-flash and gemini-flash-latest returning 503 high demand while gemini-2.5-flash answered, so it is the default (GEMINI_MODEL overrides). Added Gemini as an optional second provider in llm.py (same prompts, JSON schema via response_json_schema, cache, usage, 429/503 backoff, graceful disable with quota details); Anthropic support and offline mode unchanged, and a forced-offline run reproduces the committed output.csv byte for byte. Bounded smoke test (12 live calls): 11 screenshots gave 24 records with 0 schema/evidence violations, 20 non-platform ids rejected, one file name mapped to object_19 through a new data-catalog alias rule; 19/19 multilingual intents correct. Sample evaluation with Gemini hit the free-tier quota GenerateRequestsPerDayPerProjectPerModel-FreeTier (limit 20/day) after 8 more calls and fell back as designed; metrics were identical to offline (status 32/32, P 100%, R 86.0%, F1 92.5%, sequence 15/32), so no accuracy gain is claimed. A full-dataset Gemini run was blocked by the session's permission classifier (PII data handling) and was not attempted further; the submitted output.csv remains the offline run.
+
+Actions:
+* Created .env (git-ignored) with GEMINI_API_KEY; listed models; probed 3 models with a tiny request
+* Edited code/llm.py, config.py, media.py (catalog aliases), intent.py, main.py, package.py (secret scan), requirements.txt, README.md, evaluation/evaluation_report.md
+* Created code/evaluation/llm_smoke_test.py; ran it live (12 calls) and from cache
+* Ran sample evaluation with Gemini (8 live calls, quota hit); forced-offline regression runs (byte-identical); check_output.py (17/17); package.py; key-leak scan over tracked files, code.zip, cache and log.txt (0 hits)
+
+Context:
+tool=Claude Code
+model=claude-opus-5-5
+branch=main
+repo_root=C:\Users\BIT\Desktop\orchestrate\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+

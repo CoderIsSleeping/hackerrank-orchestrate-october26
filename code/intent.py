@@ -91,7 +91,7 @@ def classify(texts: list[str]) -> tuple[dict[str, dict], list[str]]:
             try:
                 result = llm.call_json(SYSTEM_PROMPT, [{"type": "text", "text": items}], SCHEMA, effort="low")
             except Exception as e:     # fall back to the keyword rule for this batch
-                notes.append(f"intent: Claude batch failed ({type(e).__name__}); keyword rule used")
+                notes.append(f"intent: LLM batch failed ({type(e).__name__}: {llm.disabled_reason()}); keyword rule used")
                 continue
             by_id = {r["id"]: r for r in result["results"]}
             for i, t in enumerate(batch):
@@ -100,7 +100,7 @@ def classify(texts: list[str]) -> tuple[dict[str, dict], list[str]]:
                     notes.append(f"intent: model skipped a request, rule used: {t[:60]}")
                     continue
                 out[t] = {"request_type": r["request_type"],
-                          "authorizes_deletion": r["request_type"] == "DELETION", "source": "claude"}
+                          "authorizes_deletion": r["request_type"] == "DELETION", "source": llm.provider()}
     for t in unique:
         rl = rule_label(t)
         if t not in out:

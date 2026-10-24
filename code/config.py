@@ -10,6 +10,11 @@ CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 # Claude model used for judgement calls (intent, multimodal extraction).
 # Opus 5.5 is the current default Opus; effort is set per call site.
 MODEL = "claude-opus-5-5"
+# Optional Gemini provider (used only when GEMINI_API_KEY is set and no Anthropic key is).
+# gemini-2.5-flash: stable, image+text input, answered on the free tier when probed; overridable.
+import os as _os
+GEMINI_MODEL = _os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
 # USD per 1M tokens for MODEL (Anthropic first-party pricing), used only for usage_report.md.
 PRICE_IN_PER_M = 4.00
 PRICE_OUT_PER_M = 20.00

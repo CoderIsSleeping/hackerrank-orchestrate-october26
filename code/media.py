@@ -7,6 +7,7 @@ and identifiers are re-checked downstream by exact matching. One call per file, 
 from __future__ import annotations
 
 import json
+import re
 
 import llm
 from config import EVIDENCE_ROOT
@@ -64,12 +65,32 @@ SCHEMA = {
 MEDIA_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg")
 
 
+def catalog_aliases() -> dict[str, str]:
+    """Display names the data catalog gives resources, e.g. 'object_19 (delivery_confirmation_19.pdf)'.
+
+    Screenshots often show only the display name; mapping it back to the platform id lets that evidence
+    count. Only exact aliases written in LINK_RESOURCE_IDENTITY rows are used.
+    """
+    import csv
+    from config import DATASET
+    aliases = {}
+    with open(DATASET / "system_activity.csv", encoding="utf-8") as f:
+        for a in csv.DictReader(f):
+            if a["event_type"] == "LINK_RESOURCE_IDENTITY":
+                m = re.search(rf"{re.escape(a['resource_id'])} \(([^)]+)\)", a["details"])
+                if m and m.group(1) != a["resource_id"]:
+                    aliases[m.group(1).strip().lower()] = a["resource_id"]
+    return aliases
+
+
 def extract_media(manifest: list[dict]) -> tuple[dict[str, list[Unit]], list[str]]:
     """Return {file_id: [Unit, ...]} for every PDF/image, plus notes about rejected output."""
     units: dict[str, list[Unit]] = {}
     notes: list[str] = []
+    aliases = catalog_aliases()
     if not llm.available():
-        return units, ["media: ANTHROPIC_API_KEY not set; PDFs and screenshots were not read"]
+        return units, ["media: no LLM provider (ANTHROPIC_API_KEY / GEMINI_API_KEY) set; screenshots were not read "
+                       "(PDF text layers are still read offline)"]
     for row in manifest:
         path = EVIDENCE_ROOT / row["file_path"]
         if path.suffix.lower() not in MEDIA_SUFFIXES:
@@ -87,6 +108,9 @@ def extract_media(manifest: list[dict]) -> tuple[dict[str, list[Unit]], list[str
         out = []
         for rec in result["records"]:
             rid = rec["resource_id"].strip()
+            if not RESOURCE_RE.fullmatch(rid) and rid.lower() in aliases:
+                notes.append(f"media {row['file_id']}: {rid!r} mapped to {aliases[rid.lower()]} via catalog alias")
+                rid = aliases[rid.lower()]
             if not RESOURCE_RE.fullmatch(rid):
                 notes.append(f"media {row['file_id']}: rejected id {rid!r}")
                 continue

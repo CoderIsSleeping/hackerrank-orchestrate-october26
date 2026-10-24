@@ -1,11 +1,11 @@
 # Usage report - final full-dataset run
 
-Run: `python code/main.py` on `dataset/deletion_requests.csv` (518 requests) -> `output.csv`, 17.1 s wall time. Claude available: False.
+Run: `python code/main.py` on `dataset/deletion_requests.csv` (518 requests) -> `output.csv`, 16.2 s wall time. LLM provider: none (offline).
 
 Token counts come from `response.usage` of every Claude response the run used (`code/llm.py`).
 Responses are cached on disk by request hash, so a re-run replays them: *calls* counts every
 response used by the run, *live calls* only those sent during this particular execution.
-Prices: claude-opus-5-5 at $4.00 / 1M input and $20.00 / 1M output tokens.
+Prices: claude-opus-5-5 at $4.00 / 1M input and $20.00 / 1M output tokens; Gemini calls were made on the free tier and billed $0 (Gemini output tokens include thinking tokens).
 
 | Provider | Model | Calls | Live calls | Input tokens | Output tokens | Total tokens | Est. cost (USD) |
 |---|---|---|---|---|---|---|---|

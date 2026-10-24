@@ -18,7 +18,8 @@ EXCLUDE_DIRS = {"__pycache__", ".cache", ".venv", "venv", "node_modules", ".git"
 EXCLUDE_SUFFIXES = {".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".pyc"}
 REQUIRED = {"README.md", "code/main.py", "code/requirements.txt",
             "code/evaluation/evaluation_report.md", "code/evaluation/usage_report.md"}
-SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{20,}|ANTHROPIC_API_KEY\s*=\s*(?!your-key-here)\S{8,}")
+SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{20,}|AQ\.[A-Za-z0-9_-]{30,}|"
+                       r"(ANTHROPIC|GEMINI)_API_KEY\s*=\s*(?!your-key-here)\S{8,}")
 
 
 def files() -> list[Path]:
