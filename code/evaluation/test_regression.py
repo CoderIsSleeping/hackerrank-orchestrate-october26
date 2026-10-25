@@ -157,6 +157,81 @@ class StateAndPolicyTests(unittest.TestCase):
         self.assertEqual([(s["operation"], s["evidence_id"]) for s in acct], [("VERIFY_RECORD_ABSENT", "")])
 
 
+def transcribed(rid, label, state="ACTIVE", identifiers=(), facts=""):
+    """A screenshot record as the model returns it, converted by the production code path."""
+    import media
+    rec = {"resource_id": rid, "system": "", "record_type": label, "state": state,
+           "observed_at": "2026-09-05T09:00:00Z", "identifiers": list(identifiers), "facts": facts}
+    row = {"file_id": "img_1", "file_path": "evidence/images/x.png", "captured_at": "2026-09-05T10:00:00Z"}
+    unit, _ = media.record_to_unit(rec, row, [], "", {})
+    return unit
+
+
+def audit_with_notes(units, links):
+    inv = Investigator(units, [])
+    inv.linker = StubLinker(links)
+    result = inv.investigate(req("case_t", USERS[0]))
+    status, steps = build_steps(result.decisions)
+    return status, [s["operation"] for s in steps], result.notes
+
+
+RULES = sorted({r["data_category"] for r in csv.DictReader(open(DATASET / "deletion_rules.csv", encoding="utf-8"))})
+
+
+class MediaPolicyTests(unittest.TestCase):
+    def test_model_label_is_never_authoritative(self):
+        u = transcribed("analytics_9001", "USER_PROFILE", identifiers=["Jane Roe", "user_01"])
+        self.assertNotIn("record_type", u.fields)
+        self.assertEqual(u.fields["llm_record_type"], "USER_PROFILE")
+
+    def test_conflicting_label_is_flagged_and_policy_wins(self):
+        u = transcribed("analytics_9001", "USER_PROFILE", identifiers=["jane@example.invalid", "user_01"])
+        status, ops, notes = audit_with_notes([u], {"analytics_9001": "img_1"})
+        self.assertEqual(ops, ["REPORT_EXPOSED_PII", "ANONYMIZE_RECORD", "VERIFY_RECORD_ANONYMIZED"])
+        self.assertNotIn("DELETE_RECORD", ops)
+        self.assertTrue(any("conflicts with authoritative ANALYTICS_PROFILE" in n for n in notes))
+
+    def test_identifiable_analytics_from_screenshot_requires_anonymization(self):
+        u = transcribed("analytics_9001", "", identifiers=["user_01"])       # attribution only
+        _, ops, _ = audit_with_notes([u], {"analytics_9001": "img_1"})
+        self.assertEqual(ops, ["REPORT_EXPOSED_PII", "ANONYMIZE_RECORD", "VERIFY_RECORD_ANONYMIZED"])
+
+    def test_anonymized_analytics_from_screenshot_only_verified(self):
+        u = transcribed("analytics_9001", "ANALYTICS_PROFILE", state="ANONYMIZED")
+        status, ops, notes = audit_with_notes([u], {"analytics_9001": "img_1"})
+        self.assertEqual((status, ops), ("COMPLETE", ["VERIFY_RECORD_ANONYMIZED"]))
+        self.assertFalse(any("conflicts" in n for n in notes))
+
+    def test_consistent_label_behaves_normally(self):
+        u = transcribed("support_9001", "SUPPORT_MESSAGE", identifiers=["jane@example.invalid"],
+                        facts="Support ticket conversation about an order.")
+        _, ops, notes = audit_with_notes([u], {"support_9001": "img_1"})
+        self.assertEqual(ops, ["REPORT_EXPOSED_PII", "REDACT_RECORD", "VERIFY_RECORD_REDACTED"])
+        self.assertFalse(any("conflicts" in n for n in notes))
+
+    def test_missing_or_unknown_label_falls_back_to_record_family(self):
+        for label in ("", "DATA_EXPORT", "SOMETHING_ELSE"):
+            u = transcribed("export_9001", label)
+            self.assertNotIn("direct_identifiers", u.fields)                # nothing listed -> nothing claimed
+            _, ops, notes = audit_with_notes([u], {"export_9001": "img_1"})
+            self.assertEqual(ops, ["REPORT_REMAINING_RECORD", "DELETE_RECORD", "VERIFY_RECORD_ABSENT"], label)
+            self.assertFalse(any("conflicts" in n for n in notes), label)
+
+    def test_no_model_label_can_bypass_deletion_rules(self):
+        # For each authoritative family, the operations allowed by deletion_rules.csv.
+        allowed = {
+            "audit_record_9001": {"VERIFY_RECORD_PRESENT"},                                     # RETAIN
+            "analytics_9001": {"REPORT_EXPOSED_PII", "ANONYMIZE_RECORD", "VERIFY_RECORD_ANONYMIZED"},
+            "backup_9001": {"REPORT_RESTORE_RISK", "BLOCK_RESTORE", "VERIFY_RESTORE_BLOCKED"},
+            "data_flow_9001": {"REPORT_ACTIVE_DATA_FLOW", "DISABLE_DATA_FLOW", "VERIFY_DATA_FLOW_DISABLED"},
+        }
+        for rid, ok in allowed.items():
+            for label in RULES:
+                u = transcribed(rid, label, identifiers=["jane@example.invalid", "user_01"])
+                _, ops, _ = audit_with_notes([u], {rid: "img_1"})
+                self.assertTrue(set(ops) <= ok, f"{rid} with model label {label}: {ops}")
+
+
 class InvarianceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

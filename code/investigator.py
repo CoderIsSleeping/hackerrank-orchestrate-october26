@@ -98,6 +98,9 @@ class Investigator:
             system, category = resource_meta(rid)
             visible = [u for u in self.units_by_resource.get(rid, []) if u.captured_at <= audit_at]
             category = infer_category(category, visible, set(self.rules))
+            # Model-transcribed labels are hints only; a conflicting one is flagged and ignored.
+            for label in sorted({u.fields.get("llm_record_type") for u in visible} & set(self.rules) - {category}):
+                result.notes.append(f"{rid}: model label {label} conflicts with authoritative {category}; ignored")
             per_resource[rid] = (system, category, self.observations(rid, category, audit_at))
 
         # The case's primary evidence file is the one that observes most of its resources directly.

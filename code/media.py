@@ -83,6 +83,45 @@ def catalog_aliases() -> dict[str, str]:
     return aliases
 
 
+def record_to_unit(rec: dict, row: dict, page_ids: list, page_ts: str, aliases: dict) -> tuple[Unit | None, str]:
+    """Convert one validated transcription record into a Unit (pure function, no API).
+
+    The model's record_type is free text and may be wrong (e.g. an analytics profile labelled
+    USER_PROFILE). It is kept only as the hint `llm_record_type`; it never becomes `record_type`, the
+    field authoritative evidence uses to choose a deletion rule. The category therefore always comes
+    from the resource's own family and from text evidence, so a model label cannot select a different
+    (possibly more destructive) operation. Conflicts are flagged by the investigator.
+    """
+    rid = rec["resource_id"].strip()
+    note = ""
+    if not RESOURCE_RE.fullmatch(rid) and rid.lower() in aliases:
+        note = f"media {row['file_id']}: {rid!r} mapped to {aliases[rid.lower()]} via catalog alias"
+        rid = aliases[rid.lower()]
+    if not RESOURCE_RE.fullmatch(rid):
+        return None, f"media {row['file_id']}: rejected id {rid!r}"
+    fields = {"system": rec["system"], "llm_record_type": rec["record_type"].strip().upper(),
+              "result": rec["state"] if rec["state"] not in ("UNKNOWN", "PRESENT") else "",
+              "identifiers": rec["identifiers"], "facts": rec["facts"], "_listed": True}
+    if rec["state"] == "PRESENT":
+        fields["result"] = "FOUND"
+    # Express the record's own identifiers in the fields state.py reads, so a screenshot that shows a
+    # name / email / phone / hash is never mistaken for an anonymized record. user_<n> is attribution
+    # (it keeps analytics attributable) rather than a direct identifier. No identifiers listed: unknown,
+    # nothing is set.
+    idents = [i.strip() for i in rec["identifiers"] if i and i.strip()]
+    users = [i for i in idents if re.fullmatch(r"user_\d+", i)]
+    if users:
+        fields["user_id"] = users[0]
+    if any(i not in users for i in idents):
+        fields["direct_identifiers"] = "1"
+    # Record-level identifiers ground the record; page-level ones describe the page subject.
+    text = json.dumps({"resource_id": rid, "identifiers": rec["identifiers"] + page_ids,
+                       "facts": rec["facts"]}, ensure_ascii=False)
+    observed = rec["observed_at"] or page_ts or row["captured_at"]
+    observed = observed if observed <= row["captured_at"] else row["captured_at"]
+    return Unit(row["file_id"], row["captured_at"], observed, rid, fields, rec["system"], text), note
+
+
 def extract_media(manifest: list[dict]) -> tuple[dict[str, list[Unit]], list[str]]:
     """Return {file_id: [Unit, ...]} for every PDF/image, plus notes about rejected output."""
     units: dict[str, list[Unit]] = {}
@@ -107,23 +146,10 @@ def extract_media(manifest: list[dict]) -> tuple[dict[str, list[Unit]], list[str
         page_ids = result.get("page_identifiers", [])
         out = []
         for rec in result["records"]:
-            rid = rec["resource_id"].strip()
-            if not RESOURCE_RE.fullmatch(rid) and rid.lower() in aliases:
-                notes.append(f"media {row['file_id']}: {rid!r} mapped to {aliases[rid.lower()]} via catalog alias")
-                rid = aliases[rid.lower()]
-            if not RESOURCE_RE.fullmatch(rid):
-                notes.append(f"media {row['file_id']}: rejected id {rid!r}")
-                continue
-            fields = {"system": rec["system"], "record_type": rec["record_type"].upper(),
-                      "result": rec["state"] if rec["state"] not in ("UNKNOWN", "PRESENT") else "",
-                      "identifiers": rec["identifiers"], "facts": rec["facts"], "_listed": True}
-            if rec["state"] == "PRESENT":
-                fields["result"] = "FOUND"
-            # Record-level identifiers ground the record; page-level ones describe the page subject.
-            text = json.dumps({"resource_id": rid, "identifiers": rec["identifiers"] + page_ids,
-                               "facts": rec["facts"]}, ensure_ascii=False)
-            observed = rec["observed_at"] or result.get("page_timestamp") or row["captured_at"]
-            observed = observed if observed <= row["captured_at"] else row["captured_at"]
-            out.append(Unit(row["file_id"], row["captured_at"], observed, rid, fields, rec["system"], text))
+            unit, note = record_to_unit(rec, row, page_ids, result.get("page_timestamp", ""), aliases)
+            if note:
+                notes.append(note)
+            if unit:
+                out.append(unit)
         units[row["file_id"]] = out
     return units, notes
